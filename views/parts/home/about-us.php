@@ -1,3 +1,4 @@
+<?php //dd($content['about-us'])?>
 <section id="about-us" class="section-gap">
     <div class="container">
         <div class="row">
