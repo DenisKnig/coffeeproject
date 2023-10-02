@@ -1,44 +1,56 @@
 <?php
 
-function createProductParams(): array
+function createUserParams(): array
 {
     $options = [
         'name' => [
             'flags' => FILTER_CALLBACK,
             'filter' => 'is_string'
         ],
-        'description' => [
+        'surname' => [
             'flags' => FILTER_CALLBACK,
             'filter' => 'is_string'
         ],
-        'quantity' => FILTER_VALIDATE_INT,
-        'price' => FILTER_VALIDATE_FLOAT,
-        'is_main' => FILTER_VALIDATE_BOOLEAN
+        'email' => FILTER_VALIDATE_EMAIL,
+        'password' => [
+            'flags' => FILTER_CALLBACK,
+            'filter' => 'is_string'
+        ],
+        'password_confirm' => [
+            'flags' => FILTER_CALLBACK,
+            'filter' => 'is_string'
+        ]
     ];
 
     return filter_input_array(INPUT_POST, $options);
 }
 
-function removeProductParam()
+function authUserParams(): array
 {
-    return filter_input(INPUT_POST, 'product_id', FILTER_VALIDATE_INT);
+    $options = [
+        'email' => FILTER_VALIDATE_EMAIL,
+        'password' => [
+            'flags' => FILTER_CALLBACK,
+            'filter' => 'is_string'
+        ]
+    ];
+
+    return filter_input_array(INPUT_POST, $options);
 }
 
-function editProductParams(): array
+function addToCartParams(): array
 {
     $options = [
         'product_id' => FILTER_VALIDATE_INT,
-        'name' => [
-            'flags' => FILTER_CALLBACK,
-            'filter' => 'is_string'
-        ],
-        'description' => [
-            'flags' => FILTER_CALLBACK,
-            'filter' => 'is_string'
-        ],
         'quantity' => FILTER_VALIDATE_INT,
-        'price' => FILTER_VALIDATE_FLOAT,
-        'is_main' => FILTER_VALIDATE_BOOLEAN
+        'additions' => [
+            'flags' => FILTER_REQUIRE_ARRAY,
+            'filter' => FILTER_VALIDATE_INT
+        ],
+        'additions_qty' => [
+            'flags' => FILTER_REQUIRE_ARRAY,
+            'filter' => FILTER_VALIDATE_INT
+        ]
     ];
 
     return filter_input_array(INPUT_POST, $options);
