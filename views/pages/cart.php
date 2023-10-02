@@ -1,87 +1,179 @@
 <?php
 
-require PARTS_DIR . 'header.php';
-$cart = getCartItems();
-?>
-    <section class="pt-5 pb-5">
-        <div class="container">
-            <div class="row">
-                <div class="col-2"></div>
-                <div class="col-8">
-                    <h2 class="text-center p-3 mt-4 mb-4">Cart</h2>
-                    <div class="table-responsive">
-                        <table class="table table-striped">
-                            <thead>
-                            <tr>
-                                <th>#</th>
-                                <th>Name</th>
-                                <th>Price</th>
-                                <th>Quantity</th>
-                                <th>Total</th>
-                                <th>Actions</th>
-                            </tr>
-                            </thead>
-                            <tbody>
-                            <?php foreach ($cart as $number => $item):
-                                    if (!is_array($item)) continue;
-                                $parentNumber = $number + 1;
-                                ?>
-                                <tr>
-                                    <td><?= $parentNumber ?></td>
-                                    <td><?= $item['name'] ?></td>
-                                    <td>$<?= $item['price'] ?></td>
-                                    <td><?= $item['quantity'] ?></td>
-                                    <td>$<?= $item['total'] ?></td>
-                                    <td>
-                                        <form action="/" method="POST">
-                                            <input type="hidden" name="type" value="remove_cart_item">
-                                            <input type="hidden" name="product_key" value="<?= $number ?>">
-                                            <button type="submit" class="btn btn-outline-danger"><i
-                                                    class="fa-solid fa-trash"></i></button>
-                                        </form>
-                                    </td>
-                                </tr>
-                                <?php if (!empty($item['additions'])): ?>
-                                <?php foreach ($item['additions'] as $subNumber => $addition): ?>
-                                    <tr>
-                                        <td><?= $parentNumber . '.' . ($subNumber + 1) ?></td>
-                                        <td><?= $addition['name'] ?></td>
-                                        <td>$<?= $addition['price'] ?></td>
-                                        <td><?= $addition['quantity'] ?></td>
-                                        <td>$<?= $addition['total'] ?></td>
-                                        <td>
-                                            <form action="/" method="POST">
-                                                <input type="hidden" name="type" value="remove_cart_item">
-                                                <input type="hidden" name="product_key" value="<?= $subNumber ?>">
-                                                <input type="hidden" name="parent_key" value="<?= $number ?>">
-                                                <button type="submit" class="btn btn-outline-danger"><i
-                                                        class="fa-solid fa-trash"></i></button>
-                                            </form>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                            <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                        <br>
-                        <h4 class="text-end">Total: $<?= $cart['total'] ?? 0 ?></h4>
-                        <div class="text-center w-100">
-                            <?php if (isAuth()): ?>
-                                <form action="/" method="POST">
-                                    <input type="hidden" name="type" value="create_order" />
-                                    <button type="submit" class="btn btn-success">Create order</button>
-                                </form>
-                            <?php else: ?>
-                                <h4>You're not logged in</h4>
-                                <p>Please sign in for create order</p>
-                                <a class="btn btn-outline-primary" href="/login">Log in</a>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </section>
-<?php
-require PARTS_DIR . 'footer.php';
+function addToCart(array $productData)
+{
+    $cartItems = retrieveCartFromCookie();
+    $cartItems = addOrCombineProduct(
+        $cartItems,
+        $productData
+    );
+
+    $expire = time() + (60 * 60 * 24 * 10);
+    setcookie('cart', json_encode($cartItems), $expire);
+    notify("Product was added to the cart");
+    redirect();
+}
+
+function addOrCombineProduct(array $cartItems, array $addedProduct): array
+{
+    $sameProduct = array_filter(
+        $cartItems,
+        fn($item) => $item['product_id'] === $addedProduct['product_id'] && empty($item['additions'])
+    );
+
+    if (!empty($addedProduct['additions']) || empty($sameProduct)) {
+        $cartItems[] = $addedProduct;
+    } else {
+        array_walk(
+            $cartItems,
+            function (&$item, $key, $recentProduct) {
+                if ($item['product_id'] === $recentProduct['product_id'] && empty($item['additions'])) {
+                    $item['quantity'] += $recentProduct['quantity'];
+                }
+            },
+            $addedProduct
+        );
+    }
+
+    return $cartItems;
+}
+
+function retrieveCartFromCookie(): array
+{
+    return isset($_COOKIE['cart']) ? json_decode($_COOKIE['cart'], true) : [];
+}
+
+function getCartItems(): array
+{
+    $cart = retrieveCartFromCookie();
+    $cartItems = [];
+    if (!empty($cart)) {
+        $ids = mapCartIds($cart);
+        $products = dbSelect(Tables::Products, condition: 'id IN (' . implode(',', $ids) . ')');
+        $cartItems = prepareCartItems($cart, $products);
+        $cartItems['total'] = calcTotal($cartItems);
+    }
+
+    return $cartItems;
+}
+
+function calcTotal(array $cart): float
+{
+    $total = 0;
+
+    foreach ($cart as $cartItem) {
+        if (!empty($cartItem['additions']) && is_array($cartItem['additions'])) {
+            $cartItem['total'] += calcTotal($cartItem['additions']);
+        }
+        $total += $cartItem['total'];
+    }
+
+    return $total;
+}
+
+function prepareCartItems(array $cart, array $dbProducts): array
+{
+    return array_map(
+        function ($item) use ($dbProducts) {
+            $product = getProductDataFromDbArray($dbProducts, $item['product_id']);
+            $item = array_merge(
+                $item,
+                [
+                    'name' => $product['name'],
+                    'price' => $product['price'],
+                    'total' => $product['price'] * $item['quantity'],
+                ]
+            );
+
+            if (!empty($item['additions'])) {
+                $item['additions'] = buildAdditionsData(
+                    $item['additions'],
+                    $item['additions_qty'],
+                    $dbProducts,
+                    $item['product_id']
+                );
+            } else {
+                unset($item['additions']);
+            }
+            unset($item['additions_qty']);
+
+            return $item;
+        },
+        $cart);
+}
+
+function buildAdditionsData(array $additions, array $additionsQty, array $dbProducts, int $parentId): array
+{
+    return array_map(
+        function ($id, $quantity) use ($dbProducts, $parentId) {
+            $product = getProductDataFromDbArray($dbProducts, $id);
+            return [
+                'product_id' => $id,
+                'parent_id' => $parentId,
+                'name' => $product['name'],
+                'price' => $product['price'],
+                'quantity' => $quantity,
+                'total' => $quantity * $product['price']
+            ];
+        },
+        $additions,
+        $additionsQty
+    );
+}
+
+function getProductDataFromDbArray(array $dbProducts, int $id): array|null
+{
+    $result = array_filter($dbProducts, fn($dbItem) => $dbItem['id'] === $id);
+    return array_shift($result);
+}
+
+function mapCartIds(array $cart): array
+{
+    $result = [];
+
+    array_walk(
+        $cart,
+        function ($item) use (&$result) {
+            $ids = is_null($item['additions']) ? [$item['product_id']] : [$item['product_id'], ...$item['additions']];
+            array_push($result, ...$ids);
+        }
+    );
+
+    return array_unique($result);
+}
+
+function updateCart(array $items)
+{
+    setcookie(
+        'cart',
+        json_encode(array_values($items)),
+        time() + (60 * 60 * 24 * 10)
+    );
+}
+
+function removeCartItem(array $fields)
+{
+    $cart = retrieveCartFromCookie();
+
+
+    if (isset($fields['parent_key'])) {
+        extract($fields); // $parent_key $product_key
+        unset($cart[$parent_key]['additions'][$product_key]);
+        unset($cart[$parent_key]['additions_qty'][$product_key]);
+
+        if (!empty($cart[$parent_key]['additions'])) {
+            $cart[$parent_key]['additions'] = array_values($cart[$parent_key]['additions']);
+            $cart[$parent_key]['additions_qty'] = array_values($cart[$parent_key]['additions_qty']);
+        } else {
+            $item = $cart[$parent_key];
+            unset($cart[$parent_key]);
+            $cart = addOrCombineProduct(array_values($cart), $item);
+        }
+    } else {
+        unset($cart[$fields['product_key']]);
+    }
+
+    updateCart($cart);
+    notify('Item was removed from cart');
+    redirectBack();
+}
